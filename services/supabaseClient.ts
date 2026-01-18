@@ -1,10 +1,19 @@
 
 import { createClient } from '@supabase/supabase-js';
 
+// Helper to safely access process.env without ReferenceErrors in browser
+const getEnvVar = (key: string) => {
+  try {
+    return (window as any).process?.env?.[key] || (process as any)?.env?.[key];
+  } catch {
+    return undefined;
+  }
+};
+
 // Fallback logic: check environment, then localStorage
 export const getSupabaseConfig = () => {
-  const envUrl = process.env.SUPABASE_URL;
-  const envKey = process.env.SUPABASE_ANON_KEY;
+  const envUrl = getEnvVar('SUPABASE_URL');
+  const envKey = getEnvVar('SUPABASE_ANON_KEY');
   
   const localUrl = localStorage.getItem('SUPABASE_URL');
   const localKey = localStorage.getItem('SUPABASE_ANON_KEY');
@@ -37,7 +46,6 @@ export const isSupabaseConfigured = () => {
 
 /**
  * Updates the configuration without reloading the page.
- * This is crucial for sandboxed environments where a reload might break the session.
  */
 export const updateSupabaseConfig = (url: string, key: string) => {
   if (!url.startsWith('https://')) {

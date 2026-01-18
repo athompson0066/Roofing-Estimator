@@ -1,8 +1,9 @@
+
 import React from 'react';
 import ReactDOM from 'react-dom/client';
-import App from './App';
-import AIWidget from './components/AIWidget';
-import { BusinessConfig } from './types';
+import App from './App.tsx';
+import AIWidget from './components/AIWidget.tsx';
+import { BusinessConfig } from './types.ts';
 
 const initApp = () => {
   let rootElement = document.getElementById('estimate-ai-root') || document.getElementById('root');

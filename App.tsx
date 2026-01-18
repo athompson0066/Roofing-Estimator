@@ -4,15 +4,15 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { 
   BusinessConfig, SavedWidget, 
   AppTabType, ManualPriceItem, RecommendedService 
-} from './types';
-import AIWidget from './components/AIWidget';
+} from './types.ts';
+import AIWidget from './components/AIWidget.tsx';
 import { 
   performMasterScan
-} from './services/geminiService';
+} from './services/geminiService.ts';
 import { 
   supabase, isSupabaseConfigured, updateSupabaseConfig, 
   getSupabaseConfig 
-} from './services/supabaseClient';
+} from './services/supabaseClient.ts';
 
 const INITIAL_CONFIG: BusinessConfig = {
   name: 'Apex Roofing Local',
