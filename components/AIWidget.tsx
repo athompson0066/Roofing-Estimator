@@ -2,8 +2,9 @@
 import React, { useState, useRef, useMemo, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { WidgetState, EstimateTask, EstimationResult, BusinessConfig, LeadGenConfig, RecommendedService, ManualPriceItem } from '../types';
-import { getEstimate, dispatchResendQuote } from '../services/geminiService';
+import { getEstimate, dispatchResendQuote } from '../services/geminiService.ts';
 import { GoogleGenAI, LiveServerMessage, Modality } from '@google/genai';
+import { supabase, isSupabaseConfigured } from '../services/supabaseClient.ts';
 
 interface Props {
   config: BusinessConfig;
@@ -144,7 +145,7 @@ const AIWidget: React.FC<Props> = ({ config: initialConfig }) => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       setIsVoiceActive(true);
-      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || '' });
+      const ai = new GoogleGenAI({ apiKey: (window as any).process?.env?.API_KEY || '' });
       const inputCtx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
       const outputCtx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
       audioContextRef.current = outputCtx;
@@ -208,6 +209,7 @@ const AIWidget: React.FC<Props> = ({ config: initialConfig }) => {
       setSelectedUpsellIds(est.suggestedUpsellIds || []);
       setState(WidgetState.RESULT);
     } catch (error) {
+      console.error(error);
       alert('Estimation failed. Please check your connection.');
       setState(WidgetState.IDLE);
     } finally { clearInterval(interval); }
@@ -239,14 +241,38 @@ const AIWidget: React.FC<Props> = ({ config: initialConfig }) => {
   const handleLeadSubmit = async () => {
     setState(WidgetState.LOADING);
     setLoadingMessage('Securing your spot...');
+    
     try {
+      // 1. Save to Supabase if configured
+      if (isSupabaseConfigured()) {
+        const payload = {
+          ...leadInfo,
+          estimate_range: totalCostDisplay.total,
+          task_description: task.description,
+          created_at: new Date().toISOString(),
+          metadata: {
+            zipCode: task.zipCode,
+            urgency: task.urgency,
+            upsells: selectedUpsellIds
+          }
+        };
+        const { error } = await supabase.from('leads').insert([payload]);
+        if (error) console.error("Lead saving error:", error);
+      }
+
+      // 2. Dispatch via Resend/Email if API Key provided
       await dispatchResendQuote(leadInfo, result!, config);
+      
       setState(WidgetState.SUCCESS);
-    } catch (err) { setState(WidgetState.SUCCESS); }
+    } catch (err) { 
+      console.error("Submission error:", err);
+      setState(WidgetState.SUCCESS); 
+    }
   };
 
   const leadSteps = useMemo(() => {
-    const fields = (Object.keys(config.leadGenConfig.fields) as Array<keyof LeadGenConfig['fields']>).filter(k => config.leadGenConfig.fields[k].visible);
+    const fields = (Object.keys(config.leadGenConfig.fields) as Array<keyof LeadGenConfig['fields']>)
+      .filter(k => config.leadGenConfig.fields[k].visible);
     const groups = [];
     for (let i = 0; i < fields.length; i += 2) groups.push(fields.slice(i, i + 2));
     return groups.length > 0 ? groups : [[]];
@@ -271,7 +297,7 @@ const AIWidget: React.FC<Props> = ({ config: initialConfig }) => {
             <div style={{ backgroundColor: primaryColor }} className="p-6 text-white shadow-md z-10">
               <div className="flex justify-between items-center mb-4">
                 <div className="flex items-center space-x-3">
-                  <img src={config.profilePic} className="w-12 h-12 rounded-full border-2 border-white object-cover" />
+                  <img src={config.profilePic} className="w-12 h-12 rounded-full border-2 border-white object-cover shadow-sm" />
                   <div>
                     <h3 className="font-black text-lg truncate max-w-[150px]">{config.headerTitle}</h3>
                     <p className="text-white/70 text-[10px] uppercase font-bold tracking-widest">{config.headerSubtitle}</p>
@@ -280,32 +306,33 @@ const AIWidget: React.FC<Props> = ({ config: initialConfig }) => {
                 <button onClick={toggleWidget} className="p-2 hover:bg-white/10 rounded-full transition-colors"><svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M6 18L18 6M6 6l12 12" /></svg></button>
               </div>
               <div className="flex bg-black/10 p-1 rounded-xl">
-                <button onClick={() => setMode('text')} className={`flex-1 py-1.5 rounded-lg text-xs font-bold ${mode === 'text' ? 'bg-white text-slate-900 shadow-sm' : 'text-white/70'}`}>Text Agent</button>
-                <button onClick={() => setMode('voice')} className={`flex-1 py-1.5 rounded-lg text-xs font-bold ${mode === 'voice' ? 'bg-white text-slate-900 shadow-sm' : 'text-white/70'}`}>Voice Agent</button>
+                <button onClick={() => setMode('text')} className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition-all ${mode === 'text' ? 'bg-white text-slate-900 shadow-sm' : 'text-white/70 hover:text-white'}`}>Text Agent</button>
+                <button onClick={() => setMode('voice')} className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition-all ${mode === 'voice' ? 'bg-white text-slate-900 shadow-sm' : 'text-white/70 hover:text-white'}`}>Voice Agent</button>
               </div>
             </div>
 
             <div className="flex-1 overflow-y-auto p-6 bg-slate-50 flex flex-col relative custom-scrollbar">
               <AnimatePresence mode="wait">
                 {mode === 'voice' ? (
-                  <motion.div key="voice" className="flex-1 flex flex-col items-center justify-center text-center space-y-6 py-8">
+                  <motion.div key="voice" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="flex-1 flex flex-col items-center justify-center text-center space-y-6 py-8">
                     <div className={`w-32 h-32 rounded-full flex items-center justify-center relative shadow-xl transition-all ${isVoiceActive ? 'scale-110' : ''}`} style={{ backgroundColor: isVoiceActive ? primaryColor : '#cbd5e1' }}>
                       <svg className="w-12 h-12 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" /></svg>
+                      {isVoiceActive && <div className="absolute inset-0 rounded-full border-4 border-white/30 animate-ping"></div>}
                     </div>
                     <h4 className="text-xl font-black">{isAiSpeaking ? t.voiceSpeaking : isVoiceActive ? t.voiceListening : t.voiceStart}</h4>
-                    {!isVoiceActive && <button onClick={startVoiceSession} style={{ backgroundColor: primaryColor }} className="px-8 py-3 rounded-full text-white font-bold text-sm shadow-lg hover:brightness-110">{t.voiceStart}</button>}
+                    {!isVoiceActive && <button onClick={startVoiceSession} style={{ backgroundColor: primaryColor }} className="px-8 py-3 rounded-full text-white font-bold text-sm shadow-lg hover:brightness-110 active:scale-95 transition-all">{t.voiceStart}</button>}
                   </motion.div>
                 ) : (
                   <div className="flex-1">
                     {state === WidgetState.IDLE && (
-                      <motion.form key="idle" onSubmit={handleEstimate} className="space-y-4">
+                      <motion.form key="idle" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onSubmit={handleEstimate} className="space-y-4">
                         <div className="space-y-1">
                           <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">What can we help with?</label>
-                          <textarea required value={task.description} onChange={(e) => setTask({ ...task, description: e.target.value })} className="w-full p-4 rounded-2xl border border-slate-200 text-sm h-32 outline-none focus:ring-2 focus:ring-indigo-600 shadow-sm" placeholder={t.placeholder} />
+                          <textarea required value={task.description} onChange={(e) => setTask({ ...task, description: e.target.value })} className="w-full p-4 rounded-2xl border border-slate-200 text-sm h-32 outline-none focus:ring-2 shadow-sm transition-all" style={{ '--tw-ring-color': primaryColor } as any} placeholder={t.placeholder} />
                           {config.suggestedQuestions && (
                             <div className="flex gap-2 overflow-x-auto pb-1 mt-2 no-scrollbar">
                               {config.suggestedQuestions.map(q => (
-                                <button key={q} type="button" onClick={() => setTask({...task, description: q})} className="whitespace-nowrap bg-white border border-slate-100 shadow-sm px-3 py-1.5 rounded-full text-[10px] font-bold text-slate-600 hover:border-indigo-600">{q}</button>
+                                <button key={q} type="button" onClick={() => setTask({...task, description: q})} className="whitespace-nowrap bg-white border border-slate-100 shadow-sm px-3 py-1.5 rounded-full text-[10px] font-bold text-slate-600 hover:border-indigo-600 active:scale-95 transition-all">{q}</button>
                               ))}
                             </div>
                           )}
@@ -313,30 +340,30 @@ const AIWidget: React.FC<Props> = ({ config: initialConfig }) => {
                         <div className="grid grid-cols-2 gap-4">
                           <div className="space-y-1">
                             <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">{t.zipCode}</label>
-                            <input required type="text" value={task.zipCode} onChange={(e) => setTask({ ...task, zipCode: e.target.value })} className="w-full p-3 border rounded-xl shadow-sm" />
+                            <input required type="text" value={task.zipCode} onChange={(e) => setTask({ ...task, zipCode: e.target.value })} className="w-full p-3 border rounded-xl shadow-sm outline-none focus:ring-2" style={{ '--tw-ring-color': primaryColor } as any} />
                           </div>
                           <div className="space-y-1">
                             <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">{t.urgency}</label>
-                            <select value={task.urgency} onChange={(e) => setTask({ ...task, urgency: e.target.value as any })} className="w-full p-3 border rounded-xl bg-white shadow-sm">
+                            <select value={task.urgency} onChange={(e) => setTask({ ...task, urgency: e.target.value as any })} className="w-full p-3 border rounded-xl bg-white shadow-sm outline-none focus:ring-2" style={{ '--tw-ring-color': primaryColor } as any}>
                               <option value="within-3-days">{t.within3Days}</option>
                               <option value="same-day">{t.sameDay}</option>
                               <option value="flexible">{t.flexible}</option>
                             </select>
                           </div>
                         </div>
-                        <button type="submit" style={{ backgroundColor: primaryColor }} className="w-full text-white font-black py-4 rounded-2xl shadow-lg hover:brightness-110">{t.getEstimate}</button>
+                        <button type="submit" style={{ backgroundColor: primaryColor }} className="w-full text-white font-black py-4 rounded-2xl shadow-lg hover:brightness-110 active:scale-95 transition-all">{t.getEstimate}</button>
                       </motion.form>
                     )}
 
                     {state === WidgetState.LOADING && (
                       <div className="flex-1 flex flex-col items-center justify-center py-10 space-y-6">
                         <div className="w-16 h-16 border-4 border-slate-100 border-t-indigo-600 rounded-full animate-spin" style={{ borderTopColor: primaryColor }}></div>
-                        <p className="font-black text-lg text-slate-800">{loadingMessage}</p>
+                        <p className="font-black text-lg text-slate-800 animate-pulse">{loadingMessage}</p>
                       </div>
                     )}
 
                     {state === WidgetState.RESULT && result && (
-                      <motion.div key="result" className="space-y-5 pb-4">
+                      <motion.div key="result" initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0 }} className="space-y-5 pb-4">
                         <div style={{ backgroundColor: primaryColor + '10' }} className="p-6 rounded-3xl text-center border border-indigo-100 relative overflow-hidden">
                            <p className="text-[10px] font-black uppercase tracking-[0.2em] mb-1" style={{ color: primaryColor }}>{selectedUpsellIds.length > 0 ? t.totalWithUpgrades : t.baseEstimate}</p>
                            <motion.p key={totalCostDisplay.total} initial={{ y: 5, opacity: 0 }} animate={{ y: 0, opacity: 1 }} className="text-4xl font-black" style={{ color: primaryColor }}>{totalCostDisplay.total}</motion.p>
@@ -350,14 +377,14 @@ const AIWidget: React.FC<Props> = ({ config: initialConfig }) => {
                             </h4>
                             <div className="space-y-2">
                               {relevantUpsells.map((u) => (
-                                <div key={u.id} onClick={() => setSelectedUpsellIds(prev => prev.includes(u.id) ? prev.filter(i => i !== u.id) : [...prev, u.id])} className={`p-4 rounded-2xl border-2 transition-all cursor-pointer flex justify-between items-center ${selectedUpsellIds.includes(u.id) ? 'bg-indigo-50 border-indigo-500' : 'bg-white border-slate-100 hover:border-indigo-200'}`}>
+                                <div key={u.id} onClick={() => setSelectedUpsellIds(prev => prev.includes(u.id) ? prev.filter(i => i !== u.id) : [...prev, u.id])} className={`p-4 rounded-2xl border-2 transition-all cursor-pointer flex justify-between items-center ${selectedUpsellIds.includes(u.id) ? 'bg-indigo-50 border-indigo-500 shadow-sm' : 'bg-white border-slate-100 hover:border-indigo-200'}`}>
                                   <div className="flex-1 pr-4">
                                     <h5 className="text-xs font-black text-slate-800">{u.label}</h5>
                                     <p className="text-[10px] text-slate-500 leading-tight">{u.description}</p>
                                   </div>
                                   <div className="flex flex-col items-end">
                                     <span className="text-xs font-black text-indigo-600">+{u.suggestedPrice}</span>
-                                    {selectedUpsellIds.includes(u.id) && <div className="mt-1 bg-indigo-600 rounded-full p-0.5 text-white"><svg className="w-2 h-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="4" d="M5 13l4 4L19 7" /></svg></div>}
+                                    {selectedUpsellIds.includes(u.id) && <div className="mt-1 bg-indigo-600 rounded-full p-0.5 text-white shadow-sm"><svg className="w-2 h-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="4" d="M5 13l4 4L19 7" /></svg></div>}
                                   </div>
                                 </div>
                               ))}
@@ -374,14 +401,14 @@ const AIWidget: React.FC<Props> = ({ config: initialConfig }) => {
                           ))}
                         </div>
                         <div className="flex gap-2 pt-2">
-                           <button onClick={() => setState(WidgetState.IDLE)} className="flex-1 py-4 border-2 border-slate-100 rounded-2xl text-xs font-black text-slate-400">{t.back}</button>
-                           <button onClick={() => setState(WidgetState.LEAD_FORM)} style={{ backgroundColor: primaryColor }} className="flex-[2] text-white font-black py-4 rounded-2xl shadow-lg hover:brightness-110">{t.confirmQuote}</button>
+                           <button onClick={() => setState(WidgetState.IDLE)} className="flex-1 py-4 border-2 border-slate-100 rounded-2xl text-xs font-black text-slate-400 hover:bg-slate-50 active:scale-95 transition-all">{t.back}</button>
+                           <button onClick={() => setState(WidgetState.LEAD_FORM)} style={{ backgroundColor: primaryColor }} className="flex-[2] text-white font-black py-4 rounded-2xl shadow-lg hover:brightness-110 active:scale-95 transition-all">{t.confirmQuote}</button>
                         </div>
                       </motion.div>
                     )}
 
                     {state === WidgetState.LEAD_FORM && (
-                      <motion.div key="lead-form" className="flex-1 flex flex-col h-full">
+                      <motion.div key="lead-form" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="flex-1 flex flex-col h-full">
                         <div className="mb-6 flex justify-between items-center px-1">
                           <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{t.finalDetails}</span>
                           <span className="text-[10px] font-black text-slate-900 uppercase tracking-widest">{leadFormStep + 1} / {leadSteps.length}</span>
@@ -414,8 +441,8 @@ const AIWidget: React.FC<Props> = ({ config: initialConfig }) => {
                             </motion.div>
                           </AnimatePresence>
                           <div className="flex gap-3 pt-6 pb-2">
-                              <button type="button" onClick={() => leadFormStep === 0 ? setState(WidgetState.RESULT) : setLeadFormStep(prev => prev - 1)} className="flex-1 py-4 border-2 border-slate-100 rounded-2xl text-xs font-black text-slate-400">{t.back}</button>
-                              <button type="submit" style={{ backgroundColor: primaryColor }} className="flex-[2] text-white font-black py-4 rounded-2xl shadow-xl hover:brightness-110">
+                              <button type="button" onClick={() => leadFormStep === 0 ? setState(WidgetState.RESULT) : setLeadFormStep(prev => prev - 1)} className="flex-1 py-4 border-2 border-slate-100 rounded-2xl text-xs font-black text-slate-400 hover:bg-slate-50 active:scale-95 transition-all">{t.back}</button>
+                              <button type="submit" style={{ backgroundColor: primaryColor }} className="flex-[2] text-white font-black py-4 rounded-2xl shadow-xl hover:brightness-110 active:scale-95 transition-all">
                                 {isLastStep ? t.submitGetQuote : t.next}
                               </button>
                            </div>
@@ -424,14 +451,16 @@ const AIWidget: React.FC<Props> = ({ config: initialConfig }) => {
                     )}
 
                     {state === WidgetState.SUCCESS && (
-                      <div className="flex-1 flex flex-col items-center justify-center text-center space-y-6">
-                         <div className="w-20 h-20 rounded-full bg-green-100 flex items-center justify-center text-green-600 shadow-lg">
-                           <svg className="w-10 h-10" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7" /></svg>
+                      <motion.div key="success" initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} className="flex-1 flex flex-col items-center justify-center text-center space-y-6">
+                         <div className="w-24 h-24 rounded-full bg-green-100 flex items-center justify-center text-green-600 shadow-lg border-4 border-white">
+                           <svg className="w-12 h-12" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7" /></svg>
                          </div>
-                         <h4 className="text-2xl font-black mb-2">Quote Requested!</h4>
-                         <p className="text-sm text-slate-500 max-w-[200px] mx-auto">Our team has been notified. We'll be in touch within 24 hours.</p>
-                         <button onClick={() => { setState(WidgetState.IDLE); setResult(null); }} style={{ backgroundColor: primaryColor }} className="px-8 py-4 rounded-2xl text-white font-black text-sm shadow-xl hover:brightness-110">Start New Estimate</button>
-                      </div>
+                         <div>
+                            <h4 className="text-3xl font-black mb-2">Success!</h4>
+                            <p className="text-sm text-slate-500 max-w-[240px] mx-auto font-medium">Your request for <strong>{totalCostDisplay.total}</strong> has been received. Our team will contact you shortly.</p>
+                         </div>
+                         <button onClick={() => { setState(WidgetState.IDLE); setResult(null); setLeadFormStep(0); setLeadInfo({name: '', email: '', phone: '', city: '', company: '', notes: '', serviceType: '', date: '', time: ''}); }} style={{ backgroundColor: primaryColor }} className="px-10 py-4 rounded-2xl text-white font-black text-sm shadow-xl hover:brightness-110 active:scale-95 transition-all">Start New Estimate</button>
+                      </motion.div>
                     )}
                   </div>
                 )}
@@ -440,10 +469,11 @@ const AIWidget: React.FC<Props> = ({ config: initialConfig }) => {
           </motion.div>
         )}
       </AnimatePresence>
-      <button onClick={toggleWidget} style={{ backgroundColor: state === WidgetState.CLOSED ? primaryColor : '#ffffff' }} className={`w-16 h-16 rounded-full flex items-center justify-center shadow-2xl relative group transform active:scale-95 transition-all ${state === WidgetState.CLOSED ? 'text-white' : 'text-slate-600 border'}`}>
+      <button onClick={toggleWidget} style={{ backgroundColor: state === WidgetState.CLOSED ? primaryColor : '#ffffff' }} className={`w-16 h-16 rounded-full flex items-center justify-center shadow-2xl relative group transform active:scale-95 transition-all duration-300 ${state === WidgetState.CLOSED ? 'text-white' : 'text-slate-600 border border-slate-100'}`}>
         {state === WidgetState.CLOSED ? (
           <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
         ) : <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M19 9l-7 7-7-7" /></svg>}
+        {state === WidgetState.CLOSED && <div className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 border-2 border-white rounded-full animate-bounce"></div>}
       </button>
     </div>
   );
