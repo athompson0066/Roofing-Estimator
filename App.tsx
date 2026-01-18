@@ -103,6 +103,7 @@ const App: React.FC = () => {
   const [isSyncingSheet, setIsSyncingSheet] = useState(false);
   const [urlToScan, setUrlToScan] = useState('');
   const [savedWidgets, setSavedWidgets] = useState<SavedWidget[]>([]);
+  const [leads, setLeads] = useState<any[]>([]);
   const [activeWidgetId, setActiveWidgetId] = useState<string | null>(null);
   const [cloudEnabled, setCloudEnabled] = useState(isSupabaseConfigured());
   const [tempSupabaseUrl, setTempSupabaseUrl] = useState(getSupabaseConfig().url || '');
@@ -110,12 +111,24 @@ const App: React.FC = () => {
 
   const lastSyncedUrl = useRef<string>('');
 
-  useEffect(() => { if (cloudEnabled) fetchWidgets(); }, [cloudEnabled]);
+  useEffect(() => { 
+    if (cloudEnabled) {
+      fetchWidgets();
+      fetchLeads();
+    }
+  }, [cloudEnabled]);
 
   const fetchWidgets = async () => {
     try {
       const { data, error } = await supabase.from('widgets').select('*').order('updated_at', { ascending: false });
       if (!error) setSavedWidgets(data || []);
+    } catch (e) { console.error(e); }
+  };
+
+  const fetchLeads = async () => {
+    try {
+      const { data, error } = await supabase.from('leads').select('*').order('created_at', { ascending: false });
+      if (!error) setLeads(data || []);
     } catch (e) { console.error(e); }
   };
 
@@ -273,6 +286,18 @@ const App: React.FC = () => {
     } finally { setIsScanningUrl(false); setUrlToScan(''); }
   };
 
+  const generateEmbedCode = () => {
+    const url = activeWidgetId 
+      ? `${window.location.origin}/?id=${activeWidgetId}`
+      : `${window.location.origin}/?config=${encodeURIComponent(JSON.stringify(config))}`;
+    
+    return `<iframe 
+  src="${url}" 
+  style="position:fixed; bottom:20px; right:20px; width:450px; height:650px; border:none; z-index:2147483647; border-radius:30px; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);"
+  allow="microphone"
+></iframe>`;
+  };
+
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col md:flex-row font-sans text-slate-900">
       <aside className="w-full md:w-80 bg-slate-900 text-white p-6 flex flex-col shrink-0">
@@ -290,6 +315,9 @@ const App: React.FC = () => {
           <button onClick={() => setActiveTab('crew')} className={`w-full text-left px-4 py-3 rounded-xl transition-all ${activeTab === 'crew' ? 'bg-indigo-600 shadow-lg' : 'text-slate-400 hover:bg-white/5'}`}>The AI Crew</button>
           <button onClick={() => setActiveTab('services')} className={`w-full text-left px-4 py-3 rounded-xl transition-all ${activeTab === 'services' ? 'bg-indigo-600 shadow-lg' : 'text-slate-400 hover:bg-white/5'}`}>Services & Pricing</button>
           
+          <div className="pt-6 pb-2 px-4 text-[10px] font-black text-slate-500 uppercase tracking-widest">Analytics</div>
+          <button onClick={() => setActiveTab('leads')} className={`w-full text-left px-4 py-3 rounded-xl transition-all ${activeTab === 'leads' ? 'bg-indigo-600 shadow-lg' : 'text-slate-400 hover:bg-white/5'}`}>Captured Leads</button>
+
           <div className="pt-6 pb-2 px-4 text-[10px] font-black text-slate-500 uppercase tracking-widest">Interface</div>
           <button onClick={() => setActiveTab('design')} className={`w-full text-left px-4 py-3 rounded-xl transition-all ${activeTab === 'design' ? 'bg-indigo-600 shadow-lg' : 'text-slate-400 hover:bg-white/5'}`}>Widget Branding</button>
           <button onClick={() => setActiveTab('embed')} className={`w-full text-left px-4 py-3 rounded-xl transition-all ${activeTab === 'embed' ? 'bg-indigo-600 shadow-lg' : 'text-slate-400 hover:bg-white/5'}`}>Embed Code</button>
@@ -319,6 +347,38 @@ const App: React.FC = () => {
                       No profiles found. Use the AI Crew to start.
                     </div>
                   )}
+                </div>
+              </motion.div>
+            )}
+
+            {activeTab === 'leads' && (
+              <motion.div key="leads" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-8">
+                <header><h1 className="text-4xl font-black">Captured Leads</h1></header>
+                <div className="bg-white rounded-[2.5rem] border border-slate-100 overflow-hidden shadow-sm">
+                  <table className="w-full text-left">
+                    <thead className="bg-slate-50 border-b border-slate-100">
+                      <tr>
+                        <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-slate-400">Date</th>
+                        <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-slate-400">Customer</th>
+                        <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-slate-400">Contact</th>
+                        <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-slate-400">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {leads.length > 0 ? leads.map((l, i) => (
+                        <tr key={i} className="hover:bg-slate-50 transition-colors">
+                          <td className="px-6 py-4 text-xs font-medium text-slate-500">{new Date(l.created_at).toLocaleDateString()}</td>
+                          <td className="px-6 py-4 font-bold text-sm text-slate-800">{l.name}</td>
+                          <td className="px-6 py-4 text-xs text-slate-500">{l.email}<br/>{l.phone}</td>
+                          <td className="px-6 py-4"><span className="bg-green-100 text-green-700 text-[9px] font-black uppercase tracking-widest px-2 py-1 rounded-full">New Lead</span></td>
+                        </tr>
+                      )) : (
+                        <tr>
+                          <td colSpan={4} className="px-6 py-12 text-center text-slate-400 font-bold italic">No leads captured yet.</td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
                 </div>
               </motion.div>
             )}
@@ -471,25 +531,26 @@ const App: React.FC = () => {
             {activeTab === 'embed' && (
               <motion.div key="embed" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-8">
                 <h1 className="text-4xl font-black">Publish Widget</h1>
-                <p className="text-slate-500">Copy this code to add the Roofing AI Estimator to your website's bottom right corner.</p>
-                <section className="bg-slate-900 p-8 rounded-[2rem] text-indigo-400 font-mono text-sm overflow-x-auto">
-                  <pre>{`<div id="estimate-ai-root"></div>
-<script>
-  window.ESTIMATE_AI_CONFIG = ${JSON.stringify(config, null, 2)};
-  window.ESTIMATE_AI_WIDGET_ONLY = true;
-</script>
-<script src="${window.location.origin}/index.tsx" type="module"></script>`}</pre>
-                </section>
-                <button 
-                  onClick={() => {
-                    const code = `<div id="estimate-ai-root"></div>\n<script>\n  window.ESTIMATE_AI_CONFIG = ${JSON.stringify(config, null, 2)};\n  window.ESTIMATE_AI_WIDGET_ONLY = true;\n</script>\n<script src="${window.location.origin}/index.tsx" type="module"></script>`;
-                    navigator.clipboard.writeText(code);
-                    alert("Embed code copied to clipboard!");
-                  }}
-                  className="bg-indigo-600 text-white px-8 py-4 rounded-2xl font-black text-sm uppercase tracking-widest shadow-xl flex items-center gap-2"
-                >
-                  Copy Embed Code
-                </button>
+                <p className="text-slate-500">Copy this Iframe code to add the Roofing AI Estimator to your website's floating UI.</p>
+                <div className="space-y-4">
+                  <section className="bg-slate-900 p-8 rounded-[2rem] text-indigo-400 font-mono text-sm overflow-x-auto shadow-2xl relative group">
+                    <pre className="whitespace-pre-wrap break-all">{generateEmbedCode()}</pre>
+                    <button 
+                      onClick={() => {
+                        navigator.clipboard.writeText(generateEmbedCode());
+                        alert("Iframe code copied!");
+                      }}
+                      className="absolute top-4 right-4 bg-indigo-600 text-white p-3 rounded-xl opacity-0 group-hover:opacity-100 transition-opacity"
+                    >
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3" /></svg>
+                    </button>
+                  </section>
+                  
+                  <div className="bg-amber-50 border-l-4 border-amber-500 p-6 rounded-2xl flex items-start space-x-4">
+                    <svg className="w-6 h-6 text-amber-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                    <p className="text-sm text-amber-800 font-medium">For the best experience, ensure you have saved your client profile to generate a permanent link. If not saved, the embed code will include a raw configuration string.</p>
+                  </div>
+                </div>
               </motion.div>
             )}
 
