@@ -2,14 +2,6 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { EstimateTask, EstimationResult, BusinessConfig, IntelligenceSource } from "../types.ts";
 
-const getApiKey = () => {
-  try {
-    return (window as any).process?.env?.API_KEY || (process as any)?.env?.API_KEY || '';
-  } catch {
-    return '';
-  }
-};
-
 async function retryRequest<T>(fn: () => Promise<T>, retries = 3, initialDelay = 5000): Promise<T> {
   try {
     return await fn();
@@ -183,7 +175,7 @@ const copywriterAgent = async (ai: GoogleGenAI, businessData: any) => {
  */
 export const performMasterScan = async (url: string, customInstruction?: string): Promise<Partial<BusinessConfig>> => {
   return retryRequest(async () => {
-    const ai = new GoogleGenAI({ apiKey: getApiKey() });
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
     const { data: invData, sources } = await investigatorAgent(ai, url, customInstruction || '');
     const [marketData, priceData, copyData] = await Promise.all([
       marketAnalystAgent(ai, invData),
@@ -205,7 +197,7 @@ export const performMasterScan = async (url: string, customInstruction?: string)
  */
 export const getEstimate = async (task: EstimateTask, config: BusinessConfig): Promise<EstimationResult> => {
   return retryRequest(async () => {
-    const ai = new GoogleGenAI({ apiKey: getApiKey() });
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
     
     const availableUpsells = (config.curatedRecommendations || []).filter(u => u.isApproved);
     const upsellContext = availableUpsells.map(u => `ID: ${u.id}, Label: ${u.label}, Description: ${u.description}`).join('\n');

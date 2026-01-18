@@ -145,7 +145,7 @@ const AIWidget: React.FC<Props> = ({ config: initialConfig }) => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       setIsVoiceActive(true);
-      const ai = new GoogleGenAI({ apiKey: (window as any).process?.env?.API_KEY || '' });
+      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
       const inputCtx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
       const outputCtx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
       audioContextRef.current = outputCtx;
