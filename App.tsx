@@ -287,8 +287,9 @@ const App: React.FC = () => {
   };
 
   const generateEmbedCode = () => {
+    // Using 'wid' parameter instead of 'id' to prevent platform parameter collisions
     const url = activeWidgetId 
-      ? `${window.location.origin}/?id=${activeWidgetId}&embed=true`
+      ? `${window.location.origin}/?wid=${activeWidgetId}&embed=true`
       : `${window.location.origin}/?config=${encodeURIComponent(JSON.stringify(config))}&embed=true`;
     
     return `<iframe 
