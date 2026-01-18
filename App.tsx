@@ -288,8 +288,8 @@ const App: React.FC = () => {
 
   const generateEmbedCode = () => {
     const url = activeWidgetId 
-      ? `${window.location.origin}/?id=${activeWidgetId}`
-      : `${window.location.origin}/?config=${encodeURIComponent(JSON.stringify(config))}`;
+      ? `${window.location.origin}/?id=${activeWidgetId}&embed=true`
+      : `${window.location.origin}/?config=${encodeURIComponent(JSON.stringify(config))}&embed=true`;
     
     return `<iframe 
   src="${url}" 
