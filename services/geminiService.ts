@@ -2,7 +2,11 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { EstimateTask, EstimationResult, BusinessConfig, IntelligenceSource } from "../types.ts";
 
-async function retryRequest<T>(fn: () => Promise<T>, retries = 3, initialDelay = 5000): Promise<T> {
+async function delay(ms: number) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function retryRequest<T>(fn: () => Promise<T>, retries = 3, initialDelay = 8000): Promise<T> {
   try {
     return await fn();
   } catch (error: any) {
@@ -14,7 +18,7 @@ async function retryRequest<T>(fn: () => Promise<T>, retries = 3, initialDelay =
 
     if (isQuotaError && retries > 0) {
       console.warn(`Quota exceeded. Retrying in ${initialDelay}ms... (${retries} retries left)`);
-      await new Promise(resolve => setTimeout(resolve, initialDelay));
+      await delay(initialDelay);
       return retryRequest(fn, retries - 1, initialDelay * 2);
     }
     throw error;
@@ -41,6 +45,7 @@ const cleanJson = (text: string) => {
 
 /**
  * AGENT 1: Digital Investigator
+ * Performs the initial search and identity extraction.
  */
 const investigatorAgent = async (ai: GoogleGenAI, url: string, customInstruction: string) => {
   const response = await ai.models.generateContent({
@@ -76,43 +81,31 @@ const investigatorAgent = async (ai: GoogleGenAI, url: string, customInstruction
 };
 
 /**
- * AGENT 2: Market Analyst
+ * AGENT 2: The Master Planner
+ * Combines Market Analysis, Pricing, and Copywriting into ONE call to save quota.
  */
-const marketAnalystAgent = async (ai: GoogleGenAI, businessData: any) => {
+const masterPlannerAgent = async (ai: GoogleGenAI, businessData: any) => {
   const response = await ai.models.generateContent({
-    model: 'gemini-3-flash-preview',
-    contents: `You are the 'Market Analyst' agent. Research the market for ${businessData.industry} in ${businessData.cityLocation || 'the local area'}.
-    Identify typical customer pain points and standard service offerings.`,
+    model: 'gemini-3-pro-preview',
+    contents: `You are the 'Master Strategist'. Based on this business data: ${JSON.stringify(businessData)}.
+    
+    TASK 1 (Market Analyst): Research trends for ${businessData.industry} in ${businessData.cityLocation || 'the local area'}.
+    TASK 2 (Pricing Strategist): Create a robust pricing model with rules and 6-8 manual items.
+    TASK 3 (Copywriter): Generate branding titles, a primary brand color (HEX), and 3-4 High-Value Upsell Packages.
+    
+    Ensure all logic is consistent with a professional service business.`,
     config: {
-      tools: [{ googleSearch: {} }],
       responseMimeType: 'application/json',
       responseSchema: {
         type: Type.OBJECT,
         properties: {
           marketTrends: { type: Type.ARRAY, items: { type: Type.STRING } },
-          suggestedQuestions: { type: Type.ARRAY, items: { type: Type.STRING } }
-        }
-      }
-    }
-  });
-  return JSON.parse(cleanJson(response.text));
-};
-
-/**
- * AGENT 3: Pricing Strategist
- */
-const pricingStrategistAgent = async (ai: GoogleGenAI, businessData: any) => {
-  const response = await ai.models.generateContent({
-    model: 'gemini-3-pro-preview',
-    contents: `You are the 'Pricing Strategist' agent. Create a pricing model for ${businessData.name} (${businessData.industry}).
-    Services: ${businessData.services.join(', ')}.
-    Include: General pricing rules and a specific manual price list of 5-10 common items.`,
-    config: {
-      responseMimeType: 'application/json',
-      responseSchema: {
-        type: Type.OBJECT,
-        properties: {
+          suggestedQuestions: { type: Type.ARRAY, items: { type: Type.STRING } },
           pricingRules: { type: Type.STRING },
+          headerTitle: { type: Type.STRING },
+          headerSubtitle: { type: Type.STRING },
+          primaryColor: { type: Type.STRING },
+          widgetIcon: { type: Type.STRING, enum: ['calculator', 'wrench', 'home', 'sparkles', 'chat', 'currency'] },
           manualPriceList: {
             type: Type.ARRAY,
             items: {
@@ -124,32 +117,7 @@ const pricingStrategistAgent = async (ai: GoogleGenAI, businessData: any) => {
               },
               required: ['id', 'label', 'price']
             }
-          }
-        },
-        required: ['pricingRules', 'manualPriceList']
-      }
-    }
-  });
-  return JSON.parse(cleanJson(response.text));
-};
-
-/**
- * AGENT 4: Content Copywriter
- */
-const copywriterAgent = async (ai: GoogleGenAI, businessData: any) => {
-  const response = await ai.models.generateContent({
-    model: 'gemini-3-flash-preview',
-    contents: `You are the 'Content Copywriter' agent. Create high-converting brand details for ${businessData.name}.
-    Generate: Header Title, Subtitle, Widget Icon choice, and 3-4 High-Value Upsell Packages.`,
-    config: {
-      responseMimeType: 'application/json',
-      responseSchema: {
-        type: Type.OBJECT,
-        properties: {
-          headerTitle: { type: Type.STRING },
-          headerSubtitle: { type: Type.STRING },
-          primaryColor: { type: Type.STRING },
-          widgetIcon: { type: Type.STRING, enum: ['calculator', 'wrench', 'home', 'sparkles', 'chat', 'currency'] },
+          },
           curatedRecommendations: {
             type: Type.ARRAY,
             items: {
@@ -163,7 +131,8 @@ const copywriterAgent = async (ai: GoogleGenAI, businessData: any) => {
               }
             }
           }
-        }
+        },
+        required: ['pricingRules', 'manualPriceList', 'headerTitle', 'primaryColor']
       }
     }
   });
@@ -172,21 +141,24 @@ const copywriterAgent = async (ai: GoogleGenAI, businessData: any) => {
 
 /**
  * MASTER ORCHESTRATOR
+ * Now performs only TWO sequential calls to respect low RPM limits on new keys.
  */
 export const performMasterScan = async (url: string, customInstruction?: string): Promise<Partial<BusinessConfig>> => {
   return retryRequest(async () => {
     const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    
+    // Step 1: Investigator (Uses Google Search)
     const { data: invData, sources } = await investigatorAgent(ai, url, customInstruction || '');
-    const [marketData, priceData, copyData] = await Promise.all([
-      marketAnalystAgent(ai, invData),
-      pricingStrategistAgent(ai, invData),
-      copywriterAgent(ai, invData)
-    ]);
+    
+    // Safety pause to respect Rate Per Minute (RPM) limits
+    await delay(3000);
+
+    // Step 2: Planner (Consolidated tasks into one call)
+    const plannedData = await masterPlannerAgent(ai, invData);
+    
     return {
       ...invData,
-      ...marketData,
-      ...priceData,
-      ...copyData,
+      ...plannedData,
       intelligenceSources: sources
     };
   });
